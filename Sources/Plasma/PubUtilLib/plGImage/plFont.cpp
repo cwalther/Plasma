@@ -346,7 +346,9 @@ void    plFont::IRenderString( plMipmap *mip, uint16_t x, uint16_t y, const wcha
         {
             if( fRenderInfo.fFlags & kRenderIntoAlpha )
             {
-                if( ( fRenderInfo.fColor & 0xff000000 ) != 0xff000000 )
+                if( fRenderInfo.fFlags & kRenderAlphaPremultiplied )
+                    fRenderInfo.fRenderFunc = &plFont::IRenderChar8To32AlphaPremultiplied;
+                else if( ( fRenderInfo.fColor & 0xff000000 ) != 0xff000000 )
                     fRenderInfo.fRenderFunc = &plFont::IRenderChar8To32Alpha;
                 else
                     fRenderInfo.fRenderFunc = &plFont::IRenderChar8To32FullAlpha;
@@ -976,6 +978,50 @@ void    plFont::IRenderChar8To32Alpha( const plFont::plCharacter &c )
             else if( val != 0 )
             {
                 destPtr[ x ] = ( ( alphaMult * val ) & 0xff000000 ) | destColorOnly;
+            }
+        }
+        destBasePtr = (uint32_t *)( (uint8_t *)destBasePtr + fRenderInfo.fDestStride );
+        src += fWidth;
+    }
+}
+
+void    plFont::IRenderChar8To32AlphaPremultiplied( const plFont::plCharacter &c )
+{
+    uint8_t   *src = fBMapData + c.fBitmapOff;
+    uint32_t  *destPtr, *destBasePtr = (uint32_t *)( fRenderInfo.fDestPtr - c.fBaseline * fRenderInfo.fDestStride );
+    uint16_t  x, y;
+    uint32_t  thisWidth;
+    uint8_t   srcA, srcR, srcG, srcB;
+
+
+    // Unfortunately for some fonts, their right kern value actually is
+    // farther left than the right edge of the bitmap (think of overlapping
+    // script fonts). Ideally, we should store the actual width of each char's
+    // bitmap and use that here. However, it really shouldn't make too big of a
+    // difference, especially since the dest pixels that we end up overlapping
+    // should already be in the cache. If it does, time to upgrade the font
+    // format (again)
+    thisWidth = fWidth;// + (int32_t)c.fRightKern;
+
+    if( (int32_t)c.fHeight - (int32_t)c.fBaseline  >= fRenderInfo.fMaxHeight || thisWidth >= fRenderInfo.fMaxWidth || c.fBaseline > fRenderInfo.fY )
+        return;
+
+    srcA = (uint8_t)(( fRenderInfo.fColor >> 24 ) & 0x000000ff);
+    srcR = (uint8_t)(( fRenderInfo.fColor >> 16 ) & 0x000000ff);
+    srcG = (uint8_t)(( fRenderInfo.fColor >> 8  ) & 0x000000ff);
+    srcB = (uint8_t)(( fRenderInfo.fColor       ) & 0x000000ff);
+
+    for( y = 0; y < c.fHeight; y++ )
+    {
+        destPtr = destBasePtr;
+        for( x = 0; x < thisWidth; x++ )
+        {
+            uint32_t a = src[ x ];
+            if (a != 0)
+            {
+                if (srcA != 0xff)
+                    a = (srcA*a + 127)/255;
+                destPtr[ x ] = ( a << 24 ) | (((srcR*a + 127)/255) << 16) | (((srcG*a + 127)/255) << 8) | ((srcB*a + 127)/255);
             }
         }
         destBasePtr = (uint32_t *)( (uint8_t *)destBasePtr + fRenderInfo.fDestStride );
